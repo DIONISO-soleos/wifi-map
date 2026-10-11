@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mapa de Redes Wi‑Fi</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    :root {
+      --primary: #1a73e8;
+      --primary-dark: #155cb4;
+      --success: #2ea44f;
+      --danger: #d93025;
+      --bg: #eef4ff;
+      --panel: rgba(255, 255, 255, 0.92);
+      --text: #1f2937;
+      --muted: #6b7280;
+      --shadow: 0 10px 25px rgba(0, 0, 0, 0.14);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    #app {
+      position: relative;
+      width: 100%;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 1200;
+      background: linear-gradient(135deg, var(--primary), #0d5bd7);
+      color: white;
+      padding: 18px 20px;
+      font-size: clamp(1.1rem, 2.3vw, 1.6rem);
+      font-weight: 700;
+      text-align: center;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+    }
+
+    .toolbar {
+      position: absolute;
+      top: 80px;
+      left: 20px;
+      z-index: 1200;
+      background: var(--panel);
+      border: 1px solid rgba(0,0,0,0.05);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 10px 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      backdrop-filter: blur(4px);
+    }
+
+    #city-input {
+      width: min(220px, 46vw);
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      outline: none;
+      font-size: 0.96rem;
+      transition: border-color 0.2s ease;
+    }
+
+    #city-input:focus {
+      border-color: var(--primary);
+    }
+
+    #search-btn,
+    .filter-btn {
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    #search-btn {
+      background: var(--primary);
+      color: white;
+      padding: 10px 14px;
+    }
+
+    #search-btn:hover {
+      background: var(--primary-dark);
+    }
+
+    .filter-btn {
+      background: #edf2ff;
+      color: var(--text);
+      padding: 8px 12px;
+      border: 1px solid #dbe4ff;
+    }
+
+    .filter-btn.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    #map {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .wifi-popup h3 {
+      margin: 0 0 8px;
+      color: var(--primary);
+      font-size: 1.05rem;
+    }
+
+    .wifi-popup p {
+      margin: 5px 0;
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+
+    .status-open {
+      color: var(--success);
+      font-weight: 700;
+    }
+
+    .status-locked {
+      color: var(--danger);
+      font-weight: 700;
+    }
+
+    @media (max-width: 560px) {
+      .toolbar {
+        left: 12px;
+        right: 12px;
+        top: 72px;
+      }
+
+      #city-input {
+        width: calc(100% - 110px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>📶 Localizador de Redes Wi‑Fi</header>
+
+    <div class="toolbar">
+      <input type="text" id="city-input" placeholder="Ej. Madrid, París, Lima..." />
+      <button id="search-btn" onclick="buscarCiudad()">Buscar</button>
+
+      <button class="filter-btn active" data-filter="all">Todas</button>
+      <button class="filter-btn" data-filter="Abierta">Abiertas</button>
+      <button class="filter-btn" data-filter="Protegida">Protegidas</button>
+    </div>
+
+    <div id="map"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    const map = L.map("map").setView([40.416775, -3.703790], 14);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors"
+    }).addTo(map);
+
+    const wifiPoints = [
+      { lat: 40.4175, lng: -3.7045, ssid: "Cafetería Central Free", type: "Abierta", speed: "50 Mbps" },
+      { lat: 40.4158, lng: -3.7022, ssid: "Hotel Plaza Premium", type: "Protegida", speed: "120 Mbps" },
+      { lat: 40.4182, lng: -3.7015, ssid: "Biblioteca Pública_WiFi", type: "Abierta", speed: "20 Mbps" },
+      { lat: 40.4145, lng: -3.7058, ssid: "Starbucks_Guest", type: "Protegida", speed: "80 Mbps" }
+    ];
+
+    let currentMarkers = [];
+    let activeFilter = "all";
+
+    function cargarPuntosWifi(puntos) {
+      currentMarkers.forEach(marker => map.removeLayer(marker));
+      currentMarkers = [];
+
+      puntos.forEach(punto => {
+        const color = punto.type === "Abierta" ? "green" : "red";
+        const statusClass = punto.type === "Abierta" ? "status-open" : "status-locked";
+
+        const marker = L.circleMarker([punto.lat, punto.lng], {
+          radius: 10,
+          fillColor: color,
+          color: "#fff",
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.85
+        }).addTo(map);
+
+        marker.bindPopup(`
+          <div class="wifi-popup">
+            <h3>📶 ${punto.ssid}</h3>
+            <p><strong>Tipo:</strong> <span class="${statusClass}">${punto.type}</span></p>
+            <p><strong>Velocidad:</strong> ${punto.speed}</p>
+          </div>
+        `);
+
+        currentMarkers.push(marker);
+      });
+    }
+
+    function renderByFilter() {
+      let filtered = wifiPoints;
+
+      if (activeFilter !== "all") {
+        filtered = wifiPoints.filter(p => p.type === activeFilter);
+      }
+
+      cargarPuntosWifi(filtered);
+    }
+
+    document.querySelectorAll(".filter-btn").forEach(button => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".filter-btn").forEach(btn => btn.classList.remove("active"));
+        button.classList.add("active");
+
+        activeFilter = button.dataset.filter;
+        renderByFilter();
+      });
+    });
+
+    function actualizarPuntosDesdeCiudad(lat, lon, query) {
+      const nuevosPuntos = [
+        { lat: lat + 0.002, lng: lon - 0.002, ssid: `Wi‑Fi Público ${query}`, type: "Abierta", speed: "35 Mbps" },
+        { lat: lat - 0.003, lng: lon + 0.003, ssid: "Restaurante Secure", type: "Protegida", speed: "100 Mbps" },
+        { lat: lat + 0.004, lng: lon + 0.0015, ssid: "Centro Comercial Guest", type: "Protegida", speed: "75 Mbps" }
+      ];
+
+      wifiPoints.length = 0;
+      nuevosPuntos.forEach(p => wifiPoints.push(p));
+
+      renderByFilter();
+      map.setView([lat, lon], 13);
+    }
+
+    async function buscarCiudad() {
+      const query = document.getElementById("city-input").value.trim();
+
+      if (!query) {
+        alert("Por favor escribe una ciudad");
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`
+        );
+
+        const data = await response.json();
+
+        if (!data || data.length === 0) {
+          alert("No se encontró la ciudad.");
+          return;
+        }
+
+        const lat = parseFloat(data[0].lat);
+        const lon = parseFloat(data[0].lon);
+
+        actualizarPuntosDesdeCiudad(lat, lon, query);
+      } catch (error) {
+        console.error("Error al buscar ciudad:", error);
+        alert("No se pudo obtener la ubicación. Intenta otra ciudad.");
+      }
+    }
+
+    document.getElementById("city-input").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        buscarCiudad();
+      }
+    });
+
+    renderByFilter();
+  </script>
+</body>
+</html>
